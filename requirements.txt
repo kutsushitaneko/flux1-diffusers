@@ -1,0 +1,8 @@
+gradio
+diffusers
+optimum-quanto
+numpy<2
+transformers
+accelerate
+sentencepiece
+protobuf 
