@@ -17,7 +17,7 @@ UNET_QTYPES = {
 
 pipe = None
 
-def create_pipe(model: str, offload = True, weight = "int8"):
+def create_pipe(model: str, offload = True, weight = "int8", lora_id = None):
     if model == "flux-schnell":
         bfl_repo = "black-forest-labs/FLUX.1-schnell"
     elif model == "flux-dev":
@@ -29,6 +29,9 @@ def create_pipe(model: str, offload = True, weight = "int8"):
     pipe = FluxPipeline.from_pretrained(
         bfl_repo, torch_dtype=torch.float16
     )
+
+    if lora_id is not None:
+        pipe.load_lora_weights(lora_id)
 
     if weight != "none":
         quantize(pipe.transformer, weights=UNET_QTYPES[weight], exclude=["proj_out", "x_embedder", "norm_out", "context_embedder"])
@@ -117,8 +120,9 @@ if __name__ == "__main__":
     parser.add_argument("--weight", type=str, default="int8", choices=["int2", "int4", "int8", "fp8", "none"], help="quantization precision(default: int8)")
     parser.add_argument("--share", action="store_true", help="Create a public link to your demo")
     parser.add_argument("--inbrowser", action="store_true", help="Launch the demo in the browser")
+    parser.add_argument("--lora", type=str, default=None, help="LoRA Name")
     args = parser.parse_args()
 
-    pipe = create_pipe(model=args.model, offload=args.offload, weight=args.weight)
+    pipe = create_pipe(model=args.model, offload=args.offload, weight=args.weight, lora_id=args.lora)
     demo = create_demo(model=args.model, weight=args.weight)
     demo.launch(share=args.share, inbrowser=args.inbrowser)

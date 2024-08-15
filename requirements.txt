@@ -6,3 +6,5 @@ transformers
 accelerate
 sentencepiece
 protobuf 
+peft
+ipywidgets
