@@ -5,4 +5,5 @@ numpy<2
 transformers
 accelerate
 sentencepiece
-protobuf 
+protobuf
+huggingface_hub
