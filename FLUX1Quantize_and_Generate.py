@@ -17,7 +17,7 @@ UNET_QTYPES = {
 
 pipe = None
 
-def create_pipe(model: str, offload = True, weight = "int8", lora_id = None):
+def create_pipe(model: str, dtype = "bfloat16", offload = True, weight = "int8", lora_repo_id = None, lora_weights = None):
     if model == "flux-schnell":
         bfl_repo = "black-forest-labs/FLUX.1-schnell"
     elif model == "flux-dev":
@@ -26,12 +26,16 @@ def create_pipe(model: str, offload = True, weight = "int8", lora_id = None):
         raise ValueError(f"Invalid model name: {model}")
 
     start_time = time.time()
+    torch_dtype = torch.bfloat16 if dtype == "bfloat16" else torch.float16
     pipe = FluxPipeline.from_pretrained(
-        bfl_repo, torch_dtype=torch.float16
+        bfl_repo, torch_dtype=torch_dtype
     )
 
-    if lora_id is not None:
-        pipe.load_lora_weights(lora_id)
+    if lora_repo_id is not None:
+        pipe.load_lora_weights(
+            pretrained_model_name_or_path_or_dict=lora_repo_id,
+            weight_name=lora_weights
+        )
 
     if weight != "none":
         quantize(pipe.transformer, weights=UNET_QTYPES[weight], exclude=["proj_out", "x_embedder", "norm_out", "context_embedder"])
@@ -82,7 +86,7 @@ def create_demo(model: str, weight: str):
         
         with gr.Row():
             with gr.Column():
-                prompt = gr.Textbox(label="Prompt", value="3D animation style graphics reminiscent of Pixar of a magical girl in a pink costume. She is holding a magic wand. Beside her is a white cat")
+                prompt = gr.Textbox(label="Prompt", value="3D animation style graphics reminiscent of Pixar of a magical girl in a pink costume. She is holding a magic wand. Beside her is a white cat. Seven-colored lights, petals and butterflies are dancing around them.")
                
                 with gr.Accordion("詳細設定", open=False):
                     width = gr.Slider(128, 8192, 1360, step=16, label="幅")
@@ -116,13 +120,16 @@ def create_demo(model: str, weight: str):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Flux.1 with Diffusers demo app")
     parser.add_argument("--model", type=str, default="flux-schnell", choices=["flux-schnell", "flux-dev"], help="Model name(default: flux-schnell)")
+    parser.add_argument("--dtype", type=str, default="bfloat16", choices=["bfloat16", "float16"], help="Data type(default: bfloat16)")
     parser.add_argument("--offload", action="store_true", help="Offload model to CPU when not in use")
     parser.add_argument("--weight", type=str, default="int8", choices=["int2", "int4", "int8", "fp8", "none"], help="quantization precision(default: int8)")
+    parser.add_argument("--lora_repo_id", type=str, default=None, help="LoRA repository ID or path")
+    parser.add_argument("--lora_weights", type=str, default=None, help="LoRA weights name")
     parser.add_argument("--share", action="store_true", help="Create a public link to your demo")
     parser.add_argument("--inbrowser", action="store_true", help="Launch the demo in the browser")
-    parser.add_argument("--lora", type=str, default=None, help="LoRA Name")
+ 
     args = parser.parse_args()
 
-    pipe = create_pipe(model=args.model, offload=args.offload, weight=args.weight, lora_id=args.lora)
+    pipe = create_pipe(model=args.model, dtype=args.dtype, offload=args.offload, weight=args.weight, lora_repo_id =args.lora_repo_id, lora_weights=args.lora_weights)
     demo = create_demo(model=args.model, weight=args.weight)
     demo.launch(share=args.share, inbrowser=args.inbrowser)
