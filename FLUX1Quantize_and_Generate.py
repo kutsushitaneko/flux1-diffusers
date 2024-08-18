@@ -6,6 +6,10 @@ from diffusers.pipelines.flux.pipeline_flux import FluxPipeline
 import time
 import argparse
 import random
+import uuid
+import datetime
+import os
+from PIL import Image, PngImagePlugin
 
 UNET_QTYPES = {
     "fp8": qfloat8,
@@ -18,6 +22,7 @@ UNET_QTYPES = {
 pipe = None
 
 def create_pipe(model: str, dtype = "bfloat16", offload = True, weight = "int8", lora_repo_id = None, lora_weights = None):
+    global pipe
     if model == "flux-schnell":
         bfl_repo = "black-forest-labs/FLUX.1-schnell"
     elif model == "flux-dev":
@@ -38,10 +43,14 @@ def create_pipe(model: str, dtype = "bfloat16", offload = True, weight = "int8",
         )
 
     if weight != "none":
+        quant_start_time = time.time()
         quantize(pipe.transformer, weights=UNET_QTYPES[weight], exclude=["proj_out", "x_embedder", "norm_out", "context_embedder"])
         freeze(pipe.transformer)
         quantize(pipe.text_encoder_2, weights=UNET_QTYPES[weight])
         freeze(pipe.text_encoder_2)
+        quant_end_time = time.time()
+        quant_execution_time = quant_end_time - quant_start_time
+        print(f"量子化処理の所要時間: {quant_execution_time:.2f} 秒")
 
     if offload:
         pipe.enable_model_cpu_offload()
@@ -51,16 +60,17 @@ def create_pipe(model: str, dtype = "bfloat16", offload = True, weight = "int8",
     end_time = time.time()
     execution_time = end_time - start_time
     print(f"パイプラインの作成時間: {execution_time:.2f} 秒")
-    return pipe
+    return
 
-def generate_image(width, height, num_steps, guidance, seed, prompt):
+def generate_image(width, height, num_steps, guidance, seed, prompt, is_schnell):
     start_time = time.time()
     
     if seed == "-1" or seed == "":
         seed = random.randint(0, 2**32 - 1)
     else:
         seed = int(seed)
-    
+        
+    print(f"画像生成を開始します: {seed}")
     image = pipe(
         prompt=prompt,
         height=height,
@@ -68,15 +78,34 @@ def generate_image(width, height, num_steps, guidance, seed, prompt):
         guidance_scale=guidance,
         output_type="pil",
         num_inference_steps=num_steps,
-        max_sequence_length=256,
+        max_sequence_length=256 if is_schnell else 512,
         generator=torch.Generator("cpu").manual_seed(seed)
     ).images[0]
+    print(f"画像生成を完了しました: {seed}")
+
+    # PngInfoオブジェクトを作成
+    metadata = PngImagePlugin.PngInfo()
+
+    # メタデータを追加
+    metadata.add_text("prompt", prompt)
+    metadata.add_text("height", str(height))
+    metadata.add_text("width", str(width))
+    metadata.add_text("guidance_scale", str(guidance))
+    metadata.add_text("num_inference_steps", str(num_steps))
+    metadata.add_text("seed", str(seed))
+
+    unique_id = uuid.uuid4()
+    current_time = datetime.datetime.now().strftime("%Y%m%d%H%M%S")
+    output_dir = "output"
+    os.makedirs(output_dir, exist_ok=True) 
+    filename = f"{output_dir}/{current_time}_{seed}_{unique_id}.png"
+    image.save(filename, pnginfo=metadata) # 画像を保存する際にメタデータを含める
 
     end_time = time.time()
     execution_time = end_time - start_time
     print(f"画像生成の所要時間: {execution_time:.2f} 秒")
     print(f"使用されたシード値: {seed}")
-    return image, seed
+    return image, seed, filename
 
 def create_demo(model: str, weight: str):
     is_schnell = model == "flux-schnell"
@@ -99,20 +128,21 @@ def create_demo(model: str, weight: str):
             
             with gr.Column():
                 output_image = gr.Image(label="生成画像", show_download_button=True)
+                file_output = gr.File(label="生成されたファイル")
                 generation_time = gr.Markdown(label="生成時間")
                 seed_used = gr.Markdown(label="使用されたシード値")
 
         def generate_and_display(width, height, num_steps, guidance, seed, prompt):
             start_time = time.time()
-            image, seed = generate_image(width, height, num_steps, guidance, seed, prompt)
+            image, seed, file_output = generate_image(width, height, num_steps, guidance, seed, prompt, is_schnell)
             end_time = time.time()
             execution_time = end_time - start_time
-            return image, f"使用されたシード値: {seed}", f"画像生成の所要時間: {execution_time:.2f} 秒"
+            return image, f"使用されたシード値: {seed}", f"画像生成の所要時間: {execution_time:.2f} 秒", file_output
         
         generate_btn.click(
             fn=generate_and_display,
             inputs=[width, height, num_steps, guidance, seed, prompt],
-            outputs=[output_image, seed_used, generation_time], queue=True
+            outputs=[output_image, seed_used, generation_time, file_output], queue=True, concurrency_limit=1
         )
 
     return demo
@@ -130,6 +160,7 @@ if __name__ == "__main__":
  
     args = parser.parse_args()
 
-    pipe = create_pipe(model=args.model, dtype=args.dtype, offload=args.offload, weight=args.weight, lora_repo_id =args.lora_repo_id, lora_weights=args.lora_weights)
+    create_pipe(model=args.model, dtype=args.dtype, offload=args.offload, weight=args.weight, lora_repo_id =args.lora_repo_id, lora_weights=args.lora_weights)
     demo = create_demo(model=args.model, weight=args.weight)
+    demo.queue()
     demo.launch(share=args.share, inbrowser=args.inbrowser)
